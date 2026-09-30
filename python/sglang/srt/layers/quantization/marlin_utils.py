@@ -419,22 +419,6 @@ def maybe_warn_marlin_atomic_add(device, dtype):
         )
 
 
-def maybe_warn_marlin_atomic_add_env():
-    if torch.compiler.is_dynamo_compiling():
-        return
-    # TODO(yiyun): Need to add sglang's MARLIN_USE_ATOMIC_ADD: bool = False
-    if True:
-        return
-    # if envs.VLLM_MARLIN_USE_ATOMIC_ADD:
-    #     return
-    logger.info_once(
-        "Marlin kernel can achieve better performance for small size_n "
-        "with experimental use_atomic_add feature. "
-        "You can consider set environment variable "
-        "VLLM_MARLIN_USE_ATOMIC_ADD to 1 if possible."
-    )
-
-
 def should_use_atomic_add_reduce(
     m: int, n: int, k: int, device: torch.device, dtype: torch.dtype
 ) -> bool:
@@ -443,12 +427,10 @@ def should_use_atomic_add_reduce(
     if n >= 2048 or k < 2048 or device.type != "cuda":
         return False
 
-    # disable atomicAdd reduce by default,
-    # one can enable it with VLLM_MARLIN_USE_ATOMIC_ADD=1
-    # TODO: Need to add sglang's MARLIN_USE_ATOMIC_ADD: bool = False
-    if not True:
-        maybe_warn_marlin_atomic_add_env()
-        return False
+    # atomicAdd reduce is enabled by default on sm90+ (the original vLLM
+    # env gate VLLM_MARLIN_USE_ATOMIC_ADD was hardcoded away during the
+    # port; reintroducing an SGLANG_MARLIN_USE_ATOMIC_ADD switch, if ever
+    # needed, is a separate behavior change).
 
     # sm8x doesn't support atomicAdd + bfloat16 natively
     device_capability = torch.cuda.get_device_capability(device)
