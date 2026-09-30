@@ -347,7 +347,10 @@ class MoriKVManager(CommonKVManager):
             self._start_bootstrap_thread()
         elif self.disaggregation_mode == DisaggregationMode.DECODE:
             self._start_decode_thread()
-            self._start_heartbeat_checker_thread()
+            # Track the thread so teardown() joins it (see the docstring of
+            # _start_heartbeat_checker_thread); otherwise every role flip
+            # leaks a heartbeat checker parked in _heartbeat_shutdown.wait().
+            self._worker_threads.append(self._start_heartbeat_checker_thread())
 
     def _init_engine(self) -> IOEngine:
         if self.kv_args.ib_device:
@@ -773,6 +776,9 @@ class MoriKVManager(CommonKVManager):
         here; only mori-side registrations / sockets / engine are released.
         """
         self._stopped = True
+        # Wake the heartbeat checker so the join below can reap it; it is
+        # otherwise parked in _heartbeat_shutdown.wait(interval) forever.
+        self._heartbeat_shutdown.set()
         # Transfer workers (PREFILL role) park in FastQueue.get(), which has no
         # timeout; push a None sentinel per shard to wake and stop them so the
         # join below returns instead of leaking the thread.
