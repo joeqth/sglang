@@ -174,6 +174,34 @@ class CustomSpecAlgo:
         """
         return None
 
+    def carries_draft_hidden_states(self) -> bool:
+        """EAGLE-family only in the enum; conservative default for plugins."""
+        return False
+
+    def need_topk(self) -> bool:
+        # Matches the enum's non-EAGLE/standalone branches.
+        return False
+
+    def create_future_map(
+        self,
+        device: torch.device,
+        req_to_token_pool,
+        needs_cpu_seq_lens: bool = True,
+        needs_confidence_relay: bool = False,
+    ) -> FutureMap:
+        # Mirror of SpeculativeAlgorithm.create_future_map. The scheduler
+        # calls this unconditionally from init_overlap (FutureMap is
+        # always-on), so plugin algos must provide it.
+        from sglang.srt.managers.overlap_utils import FutureMap
+
+        return FutureMap(
+            device,
+            self,
+            req_to_token_pool,
+            needs_cpu_seq_lens,
+            needs_confidence_relay,
+        )
+
 
 _REGISTRY: Dict[str, CustomSpecAlgo] = {}
 
@@ -219,8 +247,10 @@ def _assert_custom_spec_algo_conforms(spec_class: Type[CustomSpecAlgo]) -> None:
 
     interface = {
         name
-        for name in vars(SpeculativeAlgorithm)
-        if name.startswith(("is_", "supports_"))
+        for name, value in vars(SpeculativeAlgorithm).items()
+        if not name.startswith("_")
+        and callable(value)
+        and not isinstance(value, (classmethod, staticmethod))
     }
     missing = sorted(interface - set(dir(spec_class)))
     if missing:
