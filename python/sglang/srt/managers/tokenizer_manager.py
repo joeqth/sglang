@@ -1811,14 +1811,10 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             HTTPStatus.SERVICE_UNAVAILABLE,
             HTTPStatus.INTERNAL_SERVER_ERROR,
         ):
-            # Delete the key to prevent resending abort request to the scheduler and
-            # to ensure aborted request state is cleaned up.
-            if state.obj.rid in self.rid_to_state:
-                del self.rid_to_state[state.obj.rid]
-
-            # Mark ongoing LoRA request as finished.
-            if self.enable_lora and state.obj.lora_path:
-                await self.lora_registry.release(state.obj.lora_id)
+            # NOTE: the rid was already removed from rid_to_state by the
+            # out_list append site (_handle_batch_output or
+            # _handle_abort_req), and the LoRA reference was released there
+            # as well — nothing left to clean up here.
             if not is_stream:
                 raise fastapi.HTTPException(
                     status_code=finish_reason["status_code"],
@@ -3465,6 +3461,14 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         if state.prompt_token_ids is not None:
             out["prompt_token_ids"] = state.prompt_token_ids
         del self.rid_to_state[recv_obj.rid]
+
+        # Mark ongoing LoRA request as finished. This is the single release
+        # site for the AbortReq echo path (queue-stage aborts, retraction,
+        # disconnect-driven aborts, and queue-full/priority rejections that
+        # carry a 503 finish_reason); the batch-output path releases in
+        # _handle_batch_output.
+        if self.enable_lora and state.obj.lora_path:
+            asyncio.create_task(self.lora_registry.release(state.obj.lora_id))
 
         state.out_list.append(out)
         state.event.set()
