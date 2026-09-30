@@ -431,15 +431,23 @@ class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
 
         swa_last_loc = self.translate_loc_from_full_to_swa(last_loc)
 
+        # Pre-check both pools like alloc_extend: the paged alloc_decode
+        # permanently consumes free pages on success, so a one-sided None
+        # below would leak the other side's freshly consumed pages.
+        num_new_pages = get_num_new_pages(
+            seq_lens=seq_lens_cpu, page_size=self.page_size, decode=True
+        )
+        if not self.new_pages_available(num_new_pages, num_new_pages):
+            return None
+
         alloc_full_indices = self.full_attn_allocator.alloc_decode(
             seq_lens, seq_lens_cpu, last_loc
         )
         alloc_swa_indices = self.swa_attn_allocator.alloc_decode(
             seq_lens, seq_lens_cpu, swa_last_loc
         )
-
-        if alloc_full_indices is None or alloc_swa_indices is None:
-            return None
+        assert alloc_full_indices is not None
+        assert alloc_swa_indices is not None
 
         if _is_npu:
             indices_2d = alloc_full_indices.to(torch.int64).unsqueeze(-1)
