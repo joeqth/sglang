@@ -7,6 +7,7 @@ TokenizerManager's event loop.
 """
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 from types import SimpleNamespace
@@ -390,7 +391,10 @@ class RuntimeHandle:
         )
         try:
             future.result(timeout=self._ABORT_TIMEOUT_S)
-        except TimeoutError:
+        except concurrent.futures.TimeoutError:
+            # concurrent.futures.TimeoutError is only an alias of the builtin
+            # TimeoutError from Python 3.11; sglang still supports 3.10, where
+            # the builtin except clause would silently miss it.
             future.cancel()
             logger.error(
                 "gRPC abort timed out after %ss (rid=%r, abort_all=%s); "
