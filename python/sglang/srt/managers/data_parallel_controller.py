@@ -374,6 +374,7 @@ class DataParallelController:
         threads = []
         sockets = []
         ready_events = []
+        launch_failures: list[tuple[int, BaseException]] = []
         for dp_rank in range(get_parallel().dp_size):
             tmp_port_args = PortArgs.init_new(server_args)
             tmp_port_args.tokenizer_ipc_name = port_args.tokenizer_ipc_name
@@ -390,7 +391,14 @@ class DataParallelController:
             # Create a thread for each worker
             thread = threading.Thread(
                 target=self.launch_tensor_parallel_group_thread,
-                args=(server_args, tmp_port_args, base_gpu_id, dp_rank, ready_event),
+                args=(
+                    server_args,
+                    tmp_port_args,
+                    base_gpu_id,
+                    dp_rank,
+                    ready_event,
+                    launch_failures,
+                ),
             )
             threads.append(thread)
             base_gpu_id += (
@@ -417,6 +425,15 @@ class DataParallelController:
         for event in ready_events:
             event.wait()
 
+        # A launch thread that died on an exception still sets its
+        # ready_event (see launch_tensor_parallel_group_thread); surface the
+        # failure instead of continuing with a partially launched worker set.
+        if launch_failures:
+            dp_rank, exc = launch_failures[0]
+            raise RuntimeError(
+                f"Failed to launch the scheduler group of DP rank {dp_rank}"
+            ) from exc
+
     def launch_tensor_parallel_group_thread(
         self,
         server_args: ServerArgs,
@@ -424,9 +441,19 @@ class DataParallelController:
         base_gpu_id: int,
         dp_rank: int,
         ready_event: threading.Event,
+        launch_failures: list[tuple[int, BaseException]],
     ):
-        self.launch_tensor_parallel_group(server_args, port_args, base_gpu_id, dp_rank)
-        ready_event.set()
+        try:
+            self.launch_tensor_parallel_group(
+                server_args, port_args, base_gpu_id, dp_rank
+            )
+        except BaseException as e:
+            # Record the failure and wake the main thread below; otherwise it
+            # stays blocked on ready_event.wait() forever with no error.
+            launch_failures.append((dp_rank, e))
+            raise
+        finally:
+            ready_event.set()
 
         # This thread cannot be closed because otherwise the `kill_itself_when_parent_died`
         # function in scheduler.py will kill the scheduler.
