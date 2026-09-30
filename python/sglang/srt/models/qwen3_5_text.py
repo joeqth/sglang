@@ -111,22 +111,6 @@ class Qwen3_5ForCausalLM(nn.Module):
         """Forward model-owned warmup to the text backbone."""
         self.model.prepare_before_cuda_graph_capture(model_runner)
 
-    def set_dflash_layers_to_capture(self, layer_ids: list[int]) -> None:
-        if self.pp_group.world_size > 1:
-            raise NotImplementedError("DFLASH/DSPARK aux hidden capture requires PP=1.")
-        num_layers = len(self.model.layers)
-        if sorted(set(layer_ids)) != list(layer_ids) or not all(
-            0 <= layer_id < num_layers - 1 for layer_id in layer_ids
-        ):
-            raise ValueError(
-                "target_layer_ids must be unique, strictly increasing, and in "
-                f"[0, {num_layers - 1}); got {layer_ids}"
-            )
-        self.capture_aux_hidden_states = True
-        self.model.set_dflash_layers_to_capture(
-            [layer_id + 1 for layer_id in layer_ids]
-        )
-
     def get_embed_and_head(self):
         # PP splits embedding and lm_head across first/last stages; the draft keeps
         # its own copy of whichever half its stage cannot receive.
